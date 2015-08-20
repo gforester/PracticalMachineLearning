@@ -1,0 +1,92 @@
+---
+title: "Predictive Model To Determine Weight Lift Quality"
+author: "George F"
+date: "August 19, 2015"
+output: html_document
+---
+
+### Executive Summary
+ 
+Measuring the quality weight lifting 
+
+```{r load data, echo=FALSE, message=FALSE}
+# load required libraries
+library(caret)
+library(dplyr)
+library(GGally)
+library(ggplot2)
+
+# Load Training Set
+
+# fileurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+# download.file(url=fileurl, destfile="project/pml-training.csv",method="curl")
+pml.training <- read.csv(file="pml-training.csv", stringsAsFactors=FALSE)
+
+# Load Final Test Set
+# fileurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+# download.file(url=fileurl2, destfile="project/pml-testing.csv",method="curl")
+pml.testing <- read.csv(file="pml-testing.csv", stringsAsFactors=FALSE)
+
+# split training data into training an test datasets
+set.seed(1000)
+trainIndex <- createDataPartition(pml.training$classe, p = 0.60, list=FALSE)
+trainset <- pml.training[trainIndex,]
+testset <- pml.training[-trainIndex,]
+
+
+```
+
+Training dataset was partition in to 60% / 40% split for model creation and training and test validation.
+
+```{r preprocessing, echo=FALSE}
+
+# pre-process data
+# convert "" to NA's and then check for NA 
+trainset[trainset ==""] <- NA
+x <- apply(trainset,2,is.na)
+nasum <- apply(x, 2, sum)
+colsna <- nasum[nasum > 0]
+
+# test set
+testset[testset ==""] <- NA
+x <- apply(testset,2,is.na)
+nasum <- apply(x, 2, sum)
+colsna <- nasum[nasum > 0]
+
+# remove stat variables from training. model will be based on response variables
+z <- paste(names(colsna), sep=",") # create a column list of variables to remove
+trainset <- select(trainset, -one_of(c(z)))
+
+z <- paste(names(colsna), sep=",") # create a column list of variables to remove
+testset <- select(testset, -one_of(c(z)))
+
+# remove metadata variables - user_name, raw_timestamp_part_1, new_window, num_window
+trainset <- trainset[,-(1:7)]
+testset <- testset[, -(1:7)]
+# check for near zero var. no issues
+nzv <- nearZeroVar(trainset[,-53], saveMetrics= TRUE)
+
+# investigate correlation variables
+highcorr <- findCorrelation(cor(trainset[,-53]), cutoff=.80)
+head(trainset[1:200,highcorr]) 
+# remove highly correlated variables
+trainset <- trainset[,-highcorr]
+testset <- testset[, -highcorr]
+
+```
+
+Modelling code
+
+```{r train model, echo=FALSE}
+
+fitControl <- trainControl(method = "cv",
+                           number = 2,
+                           repeats = 2,
+                            )
+
+
+modFit <- train(as.factor(classe) ~.,data=trainset, method="rf", 
+                trControl=fitControl, prox=TRUE)
+
+```
+
