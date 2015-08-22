@@ -5,9 +5,8 @@ date: "August 19, 2015"
 output: html_document
 ---
 
-### Executive Summary
- 
-Measuring the quality weight lifting 
+
+
 
 ```{r load data, echo=FALSE, message=FALSE}
 # load required libraries
@@ -36,7 +35,13 @@ testset <- pml.training[-trainIndex,]
 
 ```
 
-Training dataset was partition in to 60% / 40% split for model creation and training and test validation.
+### Executive Summary
+
+Four models were developed to help predict the quality of exercises being performed. The accuracy of models when applied to the hold out test training set test validation (`r dim(testset)[1]` rows and `r dim(testset)[2]` columns) ranged from 95% to over 99%. Model 1, **Random Forest, Resampling: Cross-Validated (10 fold)**,  resulted in 100% accuracy when applied to the 20 test cases. Models 2 & 3 also resulted in 100% accuracy. Model 4, Stochastic Gradient Boosting (gbm), Resampling: Cross-Validated (10 fold), resulted in 95% accuracy.
+
+**Data-Preparation and Feature Selection**
+
+[Training dataset](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) was partition into a 60% split (`r dim(trainset)[1]` rows and `r dim(trainset)[2]` columns) for model creation, and the remaining 40% was put asided for test validation (`r dim(testset)[1]` rows and `r dim(testset)[2]` columns). The final model will be applied to the 20 [Test dataset](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) cases.
 
 ```{r preprocessing, echo=FALSE}
 
@@ -47,20 +52,12 @@ x <- apply(trainset,2,is.na)
 nasum <- apply(x, 2, sum)
 colsna <- nasum[nasum > 0]
 
-# test set
-testset[testset ==""] <- NA
-x <- apply(testset,2,is.na)
-nasum <- apply(x, 2, sum)
-colsna <- nasum[nasum > 0]
-
 # remove stat variables from training. model will be based on response variables
 z <- paste(names(colsna), sep=",") # create a column list of variables to remove
 trainset <- select(trainset, -one_of(c(z)))
 
-z <- paste(names(colsna), sep=",") # create a column list of variables to remove
-testset <- select(testset, -one_of(c(z)))
-
 # remove metadata variables - user_name, raw_timestamp_part_1, new_window, num_window
+metavar <- names(trainset[1:7])
 trainset <- trainset[,-(1:7)]
 testset <- testset[, -(1:7)]
 # check for near zero var. no issues
@@ -68,25 +65,166 @@ nzv <- nearZeroVar(trainset[,-53], saveMetrics= TRUE)
 
 # investigate correlation variables
 highcorr <- findCorrelation(cor(trainset[,-53]), cutoff=.80)
-head(trainset[1:200,highcorr]) 
+highcorrvar <- names(trainset[1:200,highcorr]) 
 # remove highly correlated variables
 trainset <- trainset[,-highcorr]
-testset <- testset[, -highcorr]
+ 
 
 ```
 
-Modelling code
+The final feature sets consisted of 39 response variables (e.g, `r as.character(head(names(trainset)))`).  Summary of the variables removed:
 
-```{r train model, echo=FALSE}
+* `r length(z)` summary statistics variables
+*  `r length(metavar)` metadata variables (user\_name, raw\_timestamp\_part\_1, ...)
+* `r length(highcorrvar)` highly correlated variables
+ 
+The training data consisted of a combination of response data from various sensors (gyros belt, magnet belt, gyros dumbbell, ..ect), and separate variables captured summary statistics at selected intervals (new\_window == yes).  `r length(z)` variables of the training set consisted of summary statistics. Out of `r nrow(trainset)` rows in statistics were captured on 238 rows (i.e. new\_window = yes) While the remaining observations were either null or NA. All statistic variables were removed from the model. Sample of the statistics removed included: `r as.character(sample(z, size=10))`
 
-fitControl <- trainControl(method = "cv",
-                           number = 2,
-                           repeats = 2,
-                            )
+ 
+After removing the metadata variables (`r as.character(metavar)`) the findCorrelation highlighted 13 highly correlated variables. These parameters were dropped (`r as.character(highcorrvar)`) 
 
 
-modFit <- train(as.factor(classe) ~.,data=trainset, method="rf", 
-                trControl=fitControl, prox=TRUE)
+```{r train model, echo=FALSE, message=FALSE}
+# details of the  modelling code are listed below  
+
+# modFit -Resampling: Cross-Validated (10 fold) 
+modFit <- readRDS("modFit.rds")
+
+# modFit1 - used RF with method = OOB (out of bag )
+modFit1 <- readRDS("modFit1.rds")
+
+# modFit2 - Resampling: Cross-Validated (2 fold) 
+modFit2 <- readRDS("modFit2.rds")
+
+# Stochastic Gradient Boosting (gbm), Resampling: Cross-Validated (10 fold) 
+modFitgbm <- readRDS("modFitgbm.rds")
+
+predmodFit <- predict(modFit, testset)
+predmodFit1 <- predict(modFit1, testset)
+predmodFit2 <- predict(modFit2, testset)
+predmodFitgbm <- predict(modFitgbm, testset)
+
+mod <- confusionMatrix(testset$classe, predmodFit)
+mod1 <- confusionMatrix(testset$classe, predmodFit1)
+mod2 <- confusionMatrix(testset$classe, predmodFit2)
+modgbm <- confusionMatrix(testset$classe, predmodFitgbm)
+
+model1 <- predict(modFit, pml.testing)
+model2 <- predict(modFit1, pml.testing)
+model3 <- predict(modFit2, pml.testing)
+model4 <- predict(modFitgbm, pml.testing)
+
+results <- bind_cols(as.data.frame(model1), as.data.frame(model2), as.data.frame(model3), as.data.frame(model4))
+
+```
+**Model Choices and Analysis**
+
+Based on the authors input in their paper [Qualitative Activity Recognition of Weight Lifting Exercises](http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf), I decided to run three random forest models with 2 different cross-validations and 1 out-of-bag. In addition Stochastic Gradient Boosting (gbm) with 10 fold cross-validation. 
+
+        * Random Forest, Resampling: Cross-Validated (10 fold) 
+        * Random Forest, trainControl(method="oob")
+        * Random Forest, Resampling: Cross-Validated (2 fold) 
+        * Stochastic Gradient Boosting (gbm), Resampling: Cross-Validated (10 fold) 
+        
+In order to estimate the out of sample accuracy I applied the predict function for each model to help estimate the out of sample error on the test set ((`r dim(testset)[1]` rows and `r dim(testset)[2]` columns)). Summary results for each model are listed below, and Figure 1 below includes Accuracy plot for model 1.
+
+
+
+*Model 1: Random Forest, Resampling: Cross-Validated (10 fold)*
+Overall Statistics
+                                          
+               Accuracy : 0.9929          
+                 95% CI : (0.9907, 0.9946)
+    No Information Rate : 0.2852          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.991           
+  
+*Model 2: Random Forest, trainControl(method="oob")*
+
+Overall Statistics
+                                          
+               Accuracy : 0.9897          
+                 95% CI : (0.9872, 0.9918)
+    No Information Rate : 0.286           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9869          
+               
+
+*Model 3: Random Forest, Resampling: Cross-Validated (2 fold)*
+
+Overall Statistics
+                                       
+               Accuracy : 0.9922       
+                 95% CI : (0.99, 0.994)
+    No Information Rate : 0.2859       
+    P-Value [Acc > NIR] : < 2.2e-16    
+                                       
+                  Kappa : 0.9902       
+   
+ 
+ *Model 4: Stochastic Gradient Boosting (gbm), Resampling: Cross-Validated (10 fold)*
+
+Overall Statistics
+                                          
+               Accuracy : 0.9528          
+                 95% CI : (0.9479, 0.9574)
+    No Information Rate : 0.2882          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9403          
+   
+   
+
+```{r plot, echo=FALSE, fig.height=4, fig.width=6}
+ggplot(data=modFit, plotType="scatter") + labs(title = "Fig 1: Model 1: Random Forest, Resampling: \n Cross-Validated (10 fold)")
+```
+
+ 
+
+   
+```{r train models, results='hold',eval=FALSE, echo=FALSE}
+
+if(!exists("modFit")){
+        fitControl <- trainControl(method = "cv",
+                                   number = 10,
+                                   repeats = 10
+                                   )
+        # modFit -Resampling: Cross-Validated (10 fold) 
+        modFit <- train(as.factor(classe) ~.,data=trainset, method="rf", 
+                        trControl=fitControl, prox=TRUE)}
+
+if(!exists("modFit1")) {
+        fitControl1 <- trainControl(method = "oob" 
+                                    ) 
+        # modFit1 - used out of bag 
+        modFit1 <- train(as.factor(classe) ~.,data=trainset, method="rf", 
+                         trControl=fitControl1, prox=TRUE)    
+        }
+
+if(!exists("modFit2")){
+        fitControl2 <- trainControl(method = "cv",
+                                    number = 2,
+                                    repeats = 2
+                                    
+                                    )
+        # modFit2 - Resampling: Cross-Validated (2 fold) 
+        modFit2 <- train(as.factor(classe) ~.,data=trainset, method="rf", 
+                         trControl=fitControl2, prox=TRUE)
+        }
+if(!exists("modFitgbm")){
+     
+        fitControl <- trainControl(method = "cv",
+                                   number = 10,
+                                   repeats = 10
+                                   )
+        modFitgbm <- train(as.factor(classe) ~.,data=trainset, method="gbm", 
+                trControl=fitControl)   
+}
+
+ 
+ 
 
 ```
 
